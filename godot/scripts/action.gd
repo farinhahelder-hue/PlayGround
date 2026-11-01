@@ -25,9 +25,9 @@ const TURN_TIME := 25.0
 const GOOD_PAUSE := 0.9
 const BAD_PAUSE := 2.6
 const PLAYER_SPEED := 8.5
-const SPAWN_EVERY := 8.0
-const MAX_HAZARDS := 5
-const GRACE_TIME := 1.5
+const SPAWN_EVERY := 9.0
+const MAX_HAZARDS := 4
+const GRACE_TIME := 2.0
 
 # Arsenal complet inspiré de Counter-Strike Gun Game (du plus basique au plus puissant)
 var weapons := [
