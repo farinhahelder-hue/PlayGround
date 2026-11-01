@@ -1,0 +1,25 @@
+; Engine configuration file.
+; Banquise En Folie — portage Godot 4
+
+config_version=5
+
+[application]
+
+config/name="Banquise En Folie"
+config/description="Jeu de questions CP/CE1/CE2 sur la banquise."
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.7", "GL Compatibility")
+config/icon="res://icon.svg"
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+environment/defaults/default_clear_color=Color(0.106, 0.227, 0.357, 1)
