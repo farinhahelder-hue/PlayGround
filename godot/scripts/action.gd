@@ -1924,7 +1924,7 @@ func _fire_shot_effect(target_pos: Vector3, wtype: String) -> void:
 
 
 func _burst(pos: Vector3, color: Color) -> void:
-	for k in range(8):
+	for k in range(16):
 		var s := MeshInstance3D.new()
 		s.mesh = _sphere(0.12)
 		var mat := StandardMaterial3D.new()
