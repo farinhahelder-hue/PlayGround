@@ -1,7 +1,7 @@
 class_name BanquiseAction
 extends Node3D
 
-# Mode « Arène » : déplacement, réponse écrite, tirs sur les cibles.
+# Mode « Arène » : déplacement, FPS / 3ème personne, Arsenal CS Gun Game, cibles et monstres de neige.
 # Tout est construit par code, sans ressource externe.
 
 signal exited
@@ -25,13 +25,66 @@ const TURN_TIME := 25.0
 const GOOD_PAUSE := 0.9
 const BAD_PAUSE := 2.6
 const PLAYER_SPEED := 8.5
-const SPAWN_EVERY := 6.0
-const MAX_HAZARDS := 7
+const SPAWN_EVERY := 8.0
+const MAX_HAZARDS := 5
+const GRACE_TIME := 1.5
 
+# Arsenal complet inspiré de Counter-Strike Gun Game (du plus basique au plus puissant)
 var weapons := [
-	{"name": "Pistolet à neige", "cd": 0.33, "pts": 10, "assist": 92.0, "hazard_assist": 46.0},
-	{"name": "Mitrailleuse", "cd": 0.12, "pts": 6, "assist": 78.0, "hazard_assist": 42.0},
-	{"name": "Canon à neige", "cd": 0.95, "pts": 25, "assist": 150.0, "hazard_assist": 70.0},
+	{
+		"name": "Arc Givré",
+		"cd": 0.35,
+		"pts": 10,
+		"assist": 105.0,
+		"hazard_assist": 75.0,
+		"type": "bow",
+		"desc": "Flèches rapides & silencieuses",
+	},
+	{
+		"name": "Pistolet Polaire",
+		"cd": 0.22,
+		"pts": 14,
+		"assist": 95.0,
+		"hazard_assist": 68.0,
+		"type": "pistol",
+		"desc": "Semi-auto précis et vif",
+	},
+	{
+		"name": "Fusil à Pompe Blizzard",
+		"cd": 0.50,
+		"pts": 20,
+		"assist": 135.0,
+		"hazard_assist": 115.0,
+		"type": "shotgun",
+		"desc": "Gerbe de 5 plombs de glace dévastateurs",
+	},
+	{
+		"name": "Mitrailleuse Tempête",
+		"cd": 0.09,
+		"pts": 12,
+		"assist": 88.0,
+		"hazard_assist": 62.0,
+		"type": "smg",
+		"desc": "Cadence automatique ultra-rapide",
+	},
+	{
+		"name": "Fusil Sniper Arctique",
+		"cd": 0.85,
+		"pts": 35,
+		"assist": 175.0,
+		"hazard_assist": 130.0,
+		"type": "sniper",
+		"desc": "Rayon perforant haute précision",
+	},
+	{
+		"name": "Lance-Roquettes Cryo",
+		"cd": 1.15,
+		"pts": 50,
+		"assist": 195.0,
+		"hazard_assist": 160.0,
+		"type": "bazooka",
+		"desc": "Roquette explosive à dégâts de zone",
+	},
 ]
 
 var slots := [
@@ -53,6 +106,8 @@ var best := 0
 var streak := 0
 var best_streak := 0
 var weapon := 0
+var gun_game_mode := true
+var hazard_kills := 0
 var game_over := false
 var accepting := false
 var resolving := false
@@ -61,7 +116,9 @@ var resolve_timer := 0.0
 var pending_over := 0.0
 var cd_left := 0.0
 var invuln := 0.0
+var grace_left := 0.0
 var hazard_timer := SPAWN_EVERY
+var banner_timer := 0.0
 
 var question: Dictionary = {}
 var theme := "nombres"
@@ -69,10 +126,21 @@ var theme_bag: Array = []
 var recent: Array = []
 var hazards: Array = []
 
+# --- FPS et caméra ---
+var fps_mode := false
+var view_pitch := 0.0
+var view_yaw := 0.0
+var recoil_pos := Vector3.ZERO
+var recoil_rot := Vector3.ZERO
+var shake_strength := 0.0
+
 # --- noeuds ---
 var player: CharacterBody3D
 var visual: Node3D
+var char_weapon_holder: Node3D
 var camera: Camera3D
+var fps_rig: Node3D
+var fps_weapon_holder: Node3D
 var marble: MeshInstance3D
 var targets: Array = []
 var target_mats: Array = []
@@ -86,10 +154,14 @@ var hud_right: Label
 var q_label: Label
 var timer_bar: ProgressBar
 var feedback: Label
+var banner_label: Label
 var hearts_label: Label
 var weapon_label: Label
 var input_field: LineEdit
 var reticle: Label
+var hitmarker: Label
+var hitmarker_timer := 0.0
+var btn_fps: Button
 var flash_rect: ColorRect
 var over_root: Control
 var over_score: Label
@@ -109,6 +181,7 @@ func setup(level: String, char_idx: int, host_node: Node) -> void:
 	_build_player()
 	_build_targets()
 	_build_ui()
+	_update_weapon_nodes()
 	built = true
 	hearts = MAX_HEARTS
 	score = 0
@@ -177,7 +250,7 @@ func _build_arena() -> void:
 	rim.position.y = 0.1
 	add_child(rim)
 
-	# petits monticules de neige au fond, hors du champ de jeu
+	# petits monticules de neige au fond
 	for i in range(8):
 		var a := PI + float(i) / 7.0 * PI
 		var r := 12.6 + randf() * 2.0
@@ -192,7 +265,7 @@ func _build_arena() -> void:
 		mound.position = Vector3(cos(a) * r, hm.height * 0.25, sin(a) * r - 2.0)
 		add_child(mound)
 
-	# fanions au fond pour repérer le sens
+	# fanions au fond
 	for x in [-9.0, -4.5, 0.0, 4.5, 9.0]:
 		var pole := MeshInstance3D.new()
 		var pm := CylinderMesh.new()
@@ -222,6 +295,17 @@ func _build_arena() -> void:
 	camera.current = true
 	add_child(camera)
 	camera.look_at(Vector3(0, 1.0, 0))
+
+	# Rig FPS fixé sur la caméra pour afficher l'arme en vue 1ère personne
+	fps_rig = Node3D.new()
+	fps_rig.name = "FPS_Rig"
+	fps_rig.position = Vector3(0.32, -0.28, -0.55)
+	fps_rig.visible = false
+	camera.add_child(fps_rig)
+
+	fps_weapon_holder = Node3D.new()
+	fps_weapon_holder.name = "FPS_Weapon"
+	fps_rig.add_child(fps_weapon_holder)
 
 
 func _build_player() -> void:
@@ -253,7 +337,6 @@ func _build_player() -> void:
 			if ch is Label3D:
 				ch.visible = false
 	else:
-		# secours si la scène hôte n'est pas disponible (tests isolés)
 		var torso := MeshInstance3D.new()
 		torso.mesh = _capsule(0.42, 1.2)
 		torso.material_override = _mat(Color(1.0, 0.62, 0.77), 0.65)
@@ -265,26 +348,13 @@ func _build_player() -> void:
 		head.position.y = 1.62
 		visual.add_child(head)
 
-	# arme (canon de neige) devant le personnage
-	var gun := MeshInstance3D.new()
-	var gm := BoxMesh.new()
-	gm.size = Vector3(0.16, 0.16, 0.78)
-	gun.mesh = gm
-	gun.material_override = _mat(Color(0.22, 0.27, 0.36), 0.35)
-	gun.position = Vector3(0.34, 0.98, 0.42)
-	visual.add_child(gun)
-	var tip := MeshInstance3D.new()
-	var tm := CylinderMesh.new()
-	tm.top_radius = 0.09
-	tm.bottom_radius = 0.11
-	tm.height = 0.18
-	tip.mesh = tm
-	tip.material_override = _mat(Color(0.55, 0.8, 1.0), 0.3)
-	tip.rotation_degrees = Vector3(90, 0, 0)
-	tip.position = Vector3(0.34, 0.98, 0.86)
-	visual.add_child(tip)
+	# Porte-arme 3ème personne visible sur le personnage
+	char_weapon_holder = Node3D.new()
+	char_weapon_holder.name = "CharWeaponHolder"
+	char_weapon_holder.position = Vector3(0.34, 0.98, 0.38)
+	visual.add_child(char_weapon_holder)
 
-	# petit halo de visée au sol
+	# halo de visée au sol (mode 3ème personne)
 	marble = MeshInstance3D.new()
 	var mm := CylinderMesh.new()
 	mm.top_radius = 0.55
@@ -298,6 +368,360 @@ func _build_player() -> void:
 	marble.material_override = mmat
 	marble.position = Vector3(0, 0.03, 0)
 	player.add_child(marble)
+
+
+# ---------- modèles 3D d'armes procéduraux ----------
+
+func _build_weapon_mesh(idx: int, is_fps: bool) -> Node3D:
+	var root := Node3D.new()
+	var s: float = 0.85 if is_fps else 0.9
+	root.scale = Vector3(s, s, s)
+
+	match idx:
+		0: # Arc Givré (Bow)
+			var bow := Node3D.new()
+			var top_arm := MeshInstance3D.new()
+			var cyl := CylinderMesh.new()
+			cyl.top_radius = 0.025
+			cyl.bottom_radius = 0.038
+			cyl.height = 0.68
+			top_arm.mesh = cyl
+			top_arm.material_override = _mat(Color(0.25, 0.65, 0.95), 0.3)
+			top_arm.rotation_degrees = Vector3(-35, 0, 0)
+			top_arm.position = Vector3(0, 0.30, -0.15)
+			bow.add_child(top_arm)
+
+			var bot_arm := MeshInstance3D.new()
+			bot_arm.mesh = cyl
+			bot_arm.material_override = _mat(Color(0.25, 0.65, 0.95), 0.3)
+			bot_arm.rotation_degrees = Vector3(35, 0, 0)
+			bot_arm.position = Vector3(0, -0.30, -0.15)
+			bow.add_child(bot_arm)
+
+			var grip := MeshInstance3D.new()
+			var gm := BoxMesh.new()
+			gm.size = Vector3(0.08, 0.22, 0.1)
+			grip.mesh = gm
+			grip.material_override = _mat(Color(0.12, 0.28, 0.45), 0.6)
+			bow.add_child(grip)
+
+			var str_node := MeshInstance3D.new()
+			var sm := CylinderMesh.new()
+			sm.top_radius = 0.007
+			sm.bottom_radius = 0.007
+			sm.height = 1.08
+			str_node.mesh = sm
+			var str_mat := StandardMaterial3D.new()
+			str_mat.albedo_color = Color(1.0, 1.0, 1.0)
+			str_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			str_node.material_override = str_mat
+			str_node.position = Vector3(0, 0, -0.32)
+			bow.add_child(str_node)
+
+			var arrow := Node3D.new()
+			var shaft := MeshInstance3D.new()
+			var shm := CylinderMesh.new()
+			shm.top_radius = 0.014
+			shm.bottom_radius = 0.014
+			shm.height = 0.88
+			shaft.mesh = shm
+			shaft.rotation_degrees = Vector3(90, 0, 0)
+			shaft.material_override = _mat(Color(0.85, 0.95, 1.0), 0.4)
+			arrow.add_child(shaft)
+
+			var tip := MeshInstance3D.new()
+			var tm := CylinderMesh.new()
+			tm.top_radius = 0.0
+			tm.bottom_radius = 0.05
+			tm.height = 0.18
+			tip.mesh = tm
+			var tmat := StandardMaterial3D.new()
+			tmat.albedo_color = Color(0.4, 0.9, 1.0)
+			tmat.emission_enabled = true
+			tmat.emission = Color(0.5, 0.95, 1.0)
+			tmat.emission_energy_multiplier = 2.0
+			tip.material_override = tmat
+			tip.rotation_degrees = Vector3(90, 0, 0)
+			tip.position = Vector3(0, 0, 0.48)
+			arrow.add_child(tip)
+			bow.add_child(arrow)
+
+			bow.rotation_degrees = Vector3(0, 90, 18) if is_fps else Vector3(0, 0, 15)
+			root.add_child(bow)
+
+		1: # Pistolet Polaire (Pistol)
+			var gun := Node3D.new()
+			var slide := MeshInstance3D.new()
+			var slm := BoxMesh.new()
+			slm.size = Vector3(0.12, 0.16, 0.52)
+			slide.mesh = slm
+			slide.material_override = _mat(Color(0.2, 0.45, 0.65), 0.3)
+			slide.position = Vector3(0, 0.08, 0.1)
+			gun.add_child(slide)
+
+			var grip := MeshInstance3D.new()
+			var gm := BoxMesh.new()
+			gm.size = Vector3(0.1, 0.28, 0.15)
+			grip.mesh = gm
+			grip.material_override = _mat(Color(0.1, 0.18, 0.28), 0.7)
+			grip.rotation_degrees = Vector3(-16, 0, 0)
+			grip.position = Vector3(0, -0.12, -0.06)
+			gun.add_child(grip)
+
+			var b := MeshInstance3D.new()
+			var bm := CylinderMesh.new()
+			bm.top_radius = 0.04
+			bm.bottom_radius = 0.04
+			bm.height = 0.22
+			b.mesh = bm
+			b.rotation_degrees = Vector3(90, 0, 0)
+			b.material_override = _mat(Color(0.1, 0.1, 0.15), 0.2)
+			b.position = Vector3(0, 0.08, 0.38)
+			gun.add_child(b)
+
+			var laser := MeshInstance3D.new()
+			laser.mesh = _sphere(0.02)
+			var lmat := StandardMaterial3D.new()
+			lmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			lmat.albedo_color = Color(0.2, 1.0, 0.9)
+			laser.material_override = lmat
+			laser.position = Vector3(0, 0.18, 0.32)
+			gun.add_child(laser)
+			root.add_child(gun)
+
+		2: # Fusil à Pompe Blizzard (Shotgun)
+			var sg := Node3D.new()
+			for side in [-0.055, 0.055]:
+				var barrel := MeshInstance3D.new()
+				var bm := CylinderMesh.new()
+				bm.top_radius = 0.045
+				bm.bottom_radius = 0.045
+				bm.height = 0.82
+				barrel.mesh = bm
+				barrel.rotation_degrees = Vector3(90, 0, 0)
+				barrel.material_override = _mat(Color(0.15, 0.28, 0.4), 0.3)
+				barrel.position = Vector3(side, 0.06, 0.35)
+				sg.add_child(barrel)
+
+			var body := MeshInstance3D.new()
+			var bdm := BoxMesh.new()
+			bdm.size = Vector3(0.19, 0.22, 0.48)
+			body.mesh = bdm
+			body.material_override = _mat(Color(0.1, 0.2, 0.3), 0.4)
+			body.position = Vector3(0, 0.02, -0.1)
+			sg.add_child(body)
+
+			var pump := MeshInstance3D.new()
+			var pm := BoxMesh.new()
+			pm.size = Vector3(0.21, 0.14, 0.28)
+			pump.mesh = pm
+			pump.material_override = _mat(Color(0.35, 0.72, 0.95), 0.5)
+			pump.position = Vector3(0, -0.05, 0.28)
+			sg.add_child(pump)
+
+			var stock := MeshInstance3D.new()
+			var stm := BoxMesh.new()
+			stm.size = Vector3(0.13, 0.24, 0.44)
+			stock.mesh = stm
+			stock.material_override = _mat(Color(0.12, 0.22, 0.32), 0.6)
+			stock.position = Vector3(0, -0.09, -0.42)
+			sg.add_child(stock)
+			root.add_child(sg)
+
+		3: # Mitrailleuse Tempête (SMG)
+			var smg := Node3D.new()
+			var body := MeshInstance3D.new()
+			var bm := BoxMesh.new()
+			bm.size = Vector3(0.15, 0.22, 0.62)
+			body.mesh = bm
+			body.material_override = _mat(Color(0.16, 0.22, 0.32), 0.4)
+			smg.add_child(body)
+
+			var b := MeshInstance3D.new()
+			var bm2 := CylinderMesh.new()
+			bm2.top_radius = 0.05
+			bm2.bottom_radius = 0.05
+			bm2.height = 0.42
+			b.mesh = bm2
+			b.rotation_degrees = Vector3(90, 0, 0)
+			b.material_override = _mat(Color(0.25, 0.35, 0.5), 0.3)
+			b.position = Vector3(0, 0.02, 0.46)
+			smg.add_child(b)
+
+			var mag := MeshInstance3D.new()
+			var mm := BoxMesh.new()
+			mm.size = Vector3(0.09, 0.36, 0.16)
+			mag.mesh = mm
+			mag.material_override = _mat(Color(0.08, 0.12, 0.18), 0.5)
+			mag.rotation_degrees = Vector3(15, 0, 0)
+			mag.position = Vector3(0, -0.22, 0.08)
+			smg.add_child(mag)
+
+			var sight := MeshInstance3D.new()
+			var sim := BoxMesh.new()
+			sim.size = Vector3(0.08, 0.1, 0.15)
+			sight.mesh = sim
+			sight.material_override = _mat(Color(0.1, 0.15, 0.25), 0.4)
+			sight.position = Vector3(0, 0.16, 0.0)
+			smg.add_child(sight)
+			root.add_child(smg)
+
+		4: # Fusil Sniper Arctique (Sniper)
+			var snip := Node3D.new()
+			var body := MeshInstance3D.new()
+			var bm := BoxMesh.new()
+			bm.size = Vector3(0.14, 0.18, 0.88)
+			body.mesh = bm
+			body.material_override = _mat(Color(0.2, 0.3, 0.45), 0.35)
+			snip.add_child(body)
+
+			var b := MeshInstance3D.new()
+			var bm2 := CylinderMesh.new()
+			bm2.top_radius = 0.035
+			bm2.bottom_radius = 0.045
+			bm2.height = 1.02
+			b.mesh = bm2
+			b.rotation_degrees = Vector3(90, 0, 0)
+			b.material_override = _mat(Color(0.12, 0.18, 0.26), 0.2)
+			b.position = Vector3(0, 0.02, 0.88)
+			snip.add_child(b)
+
+			var mb := MeshInstance3D.new()
+			var mbm := BoxMesh.new()
+			mbm.size = Vector3(0.09, 0.09, 0.16)
+			mb.mesh = mbm
+			mb.material_override = _mat(Color(0.1, 0.1, 0.15), 0.3)
+			mb.position = Vector3(0, 0.02, 1.42)
+			snip.add_child(mb)
+
+			var scope := MeshInstance3D.new()
+			var scm := CylinderMesh.new()
+			scm.top_radius = 0.065
+			scm.bottom_radius = 0.065
+			scm.height = 0.54
+			scope.mesh = scm
+			scope.rotation_degrees = Vector3(90, 0, 0)
+			scope.material_override = _mat(Color(0.15, 0.22, 0.32), 0.2)
+			scope.position = Vector3(0, 0.18, 0.05)
+			snip.add_child(scope)
+
+			var lens := MeshInstance3D.new()
+			lens.mesh = _sphere(0.06)
+			var lmat := StandardMaterial3D.new()
+			lmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			lmat.albedo_color = Color(0.2, 0.9, 1.0)
+			lens.material_override = lmat
+			lens.position = Vector3(0, 0.18, 0.32)
+			snip.add_child(lens)
+			root.add_child(snip)
+
+		5: # Lance-Roquettes Cryo (Bazooka)
+			var bzk := Node3D.new()
+			var tube := MeshInstance3D.new()
+			var tm := CylinderMesh.new()
+			tm.top_radius = 0.16
+			tm.bottom_radius = 0.16
+			tm.height = 1.25
+			tube.mesh = tm
+			tube.rotation_degrees = Vector3(90, 0, 0)
+			tube.material_override = _mat(Color(0.18, 0.32, 0.48), 0.35)
+			bzk.add_child(tube)
+
+			var ring := MeshInstance3D.new()
+			var rm := CylinderMesh.new()
+			rm.top_radius = 0.18
+			rm.bottom_radius = 0.18
+			rm.height = 0.12
+			ring.mesh = rm
+			ring.rotation_degrees = Vector3(90, 0, 0)
+			ring.material_override = _mat(Color(0.9, 0.65, 0.2), 0.4)
+			ring.position = Vector3(0, 0, 0.58)
+			bzk.add_child(ring)
+
+			var warhead := MeshInstance3D.new()
+			var wm := CylinderMesh.new()
+			wm.top_radius = 0.0
+			wm.bottom_radius = 0.14
+			wm.height = 0.32
+			warhead.mesh = wm
+			warhead.rotation_degrees = Vector3(90, 0, 0)
+			var wmat := StandardMaterial3D.new()
+			wmat.albedo_color = Color(0.4, 0.85, 1.0)
+			wmat.emission_enabled = true
+			wmat.emission = Color(0.3, 0.8, 1.0)
+			wmat.emission_energy_multiplier = 1.5
+			warhead.material_override = wmat
+			warhead.position = Vector3(0, 0, 0.72)
+			bzk.add_child(warhead)
+
+			var grip := MeshInstance3D.new()
+			var gm := BoxMesh.new()
+			gm.size = Vector3(0.08, 0.26, 0.12)
+			grip.mesh = gm
+			grip.material_override = _mat(Color(0.1, 0.15, 0.2), 0.6)
+			grip.position = Vector3(0, -0.22, 0.1)
+			bzk.add_child(grip)
+			root.add_child(bzk)
+
+	return root
+
+
+func _update_weapon_nodes() -> void:
+	if char_weapon_holder != null:
+		for ch in char_weapon_holder.get_children():
+			ch.queue_free()
+		var mesh3p := _build_weapon_mesh(weapon, false)
+		char_weapon_holder.add_child(mesh3p)
+
+	if fps_weapon_holder != null:
+		for ch in fps_weapon_holder.get_children():
+			ch.queue_free()
+		var mesh1p := _build_weapon_mesh(weapon, true)
+		fps_weapon_holder.add_child(mesh1p)
+
+
+func _advance_gun() -> void:
+	if weapon < weapons.size() - 1:
+		weapon += 1
+		_show_banner("★ ARME AMÉLIORÉE (GUN GAME) ! %s ★" % str(weapons[weapon].get("name", "")))
+		_play("level")
+		_update_weapon_nodes()
+		_update_hud()
+
+
+func _toggle_fps() -> void:
+	fps_mode = not fps_mode
+	if fps_mode:
+		camera.fov = 75.0
+		visual.visible = false
+		fps_rig.visible = true
+		marble.visible = false
+		btn_fps.text = "Vue : FPS (1ère pers.) [V]"
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+		feedback.text = "Mode FPS activé ! Viseur centré, ZQSD pour bouger."
+	else:
+		camera.fov = 45.0
+		visual.visible = true
+		fps_rig.visible = false
+		marble.visible = true
+		btn_fps.text = "Vue : 3ème personne [V]"
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+		feedback.text = "Mode 3ème personne réactivé."
+	feedback.add_theme_color_override("font_color", Color(0.4, 0.85, 1.0))
+
+
+func _show_banner(txt: String) -> void:
+	if banner_label != null:
+		banner_label.text = txt
+		banner_label.visible = true
+		banner_timer = 2.4
+
+
+func _show_hitmarker() -> void:
+	if hitmarker != null:
+		hitmarker.visible = true
+		hitmarker.modulate = Color(1.0, 0.35, 0.35, 1.0)
+		hitmarker_timer = 0.15
 
 
 func _build_targets() -> void:
@@ -318,7 +742,6 @@ func _build_targets() -> void:
 		body.material_override = mat
 		root.add_child(body)
 
-		# cadre de glace
 		var frame := MeshInstance3D.new()
 		var fm := BoxMesh.new()
 		fm.size = Vector3(3.55, 2.45, 0.3)
@@ -338,7 +761,6 @@ func _build_targets() -> void:
 		lab.outline_size = 14
 		lab.outline_modulate = Color(0.02, 0.1, 0.18, 0.95)
 		lab.modulate = Color(0.97, 0.99, 1.0)
-		# avec autowrap + alignement centré, Label3D centre déjà son bloc sur son origine
 		lab.position = Vector3(0, -0.06, 0.27)
 		root.add_child(lab)
 
@@ -426,10 +848,33 @@ func _build_ui() -> void:
 	hud_right.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	ui_root.add_child(hud_right)
 
+	# Bouton bascule FPS / 3ème personne dans le coin haut droit
+	btn_fps = _make_button("Vue : 3ème personne [V]", Vector2(210, 34), 14)
+	btn_fps.anchor_left = 1.0
+	btn_fps.anchor_right = 1.0
+	btn_fps.offset_left = -236
+	btn_fps.offset_right = -26
+	btn_fps.offset_top = 50
+	btn_fps.offset_bottom = 84
+	btn_fps.pressed.connect(_toggle_fps)
+	ui_root.add_child(btn_fps)
+
+	# Bannière centrale de Level Up / Gun Game
+	banner_label = _make_label("", 28, Color(1.0, 0.9, 0.4))
+	banner_label.anchor_left = 0.5
+	banner_label.anchor_right = 0.5
+	banner_label.offset_left = -400
+	banner_label.offset_right = 400
+	banner_label.offset_top = 18
+	banner_label.offset_bottom = 54
+	banner_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	banner_label.visible = false
+	ui_root.add_child(banner_label)
+
 	var qpanel := PanelContainer.new()
 	qpanel.anchor_right = 1.0
 	qpanel.offset_left = 130
-	qpanel.offset_right = -130
+	qpanel.offset_right = -250
 	qpanel.offset_top = 58
 	qpanel.offset_bottom = 164
 	qpanel.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -441,7 +886,7 @@ func _build_ui() -> void:
 	for side in ["top", "bottom"]:
 		qmargin.add_theme_constant_override("margin_" + side, 8)
 	qpanel.add_child(qmargin)
-	q_label = _make_label("", 27)
+	q_label = _make_label("", 26)
 	q_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	q_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	q_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -464,7 +909,7 @@ func _build_ui() -> void:
 	timer_bar.add_theme_stylebox_override("fill", fill)
 	ui_root.add_child(timer_bar)
 
-	feedback = _make_label("", 26, Color(0.8, 1.0, 0.85))
+	feedback = _make_label("", 24, Color(0.8, 1.0, 0.85))
 	feedback.anchor_right = 1.0
 	feedback.offset_left = 60
 	feedback.offset_right = -60
@@ -481,8 +926,8 @@ func _build_ui() -> void:
 	bottom.anchor_bottom = 1.0
 	bottom.offset_left = 24
 	bottom.offset_right = -24
-	bottom.offset_top = -120
-	bottom.offset_bottom = -14
+	bottom.offset_top = -124
+	bottom.offset_bottom = -12
 	bottom.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bottom.add_theme_stylebox_override("panel", _stylebox(Color(0.03, 0.11, 0.19, 0.92), 16, 1))
 	ui_root.add_child(bottom)
@@ -503,13 +948,13 @@ func _build_ui() -> void:
 	row.add_theme_constant_override("separation", 18)
 	bvb.add_child(row)
 	hearts_label = _make_label("", 26, Color(1.0, 0.45, 0.55))
-	hearts_label.custom_minimum_size = Vector2(150, 0)
+	hearts_label.custom_minimum_size = Vector2(130, 0)
 	hearts_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row.add_child(hearts_label)
 
 	input_field = LineEdit.new()
-	input_field.placeholder_text = "Écris la réponse, puis Entrée = tir dirigé"
-	input_field.custom_minimum_size = Vector2(480, 46)
+	input_field.placeholder_text = "Écris la réponse, puis Entrée = tir direct !"
+	input_field.custom_minimum_size = Vector2(460, 46)
 	input_field.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	input_field.add_theme_font_size_override("font_size", 21)
 	input_field.add_theme_color_override("font_color", Color(0.95, 0.99, 1.0))
@@ -519,26 +964,34 @@ func _build_ui() -> void:
 	input_field.text_submitted.connect(_on_text_submitted)
 	row.add_child(input_field)
 
-	weapon_label = _make_label("", 18, Color(0.72, 0.88, 1.0))
-	weapon_label.custom_minimum_size = Vector2(230, 0)
+	weapon_label = _make_label("", 17, Color(0.72, 0.88, 1.0))
+	weapon_label.custom_minimum_size = Vector2(280, 0)
 	weapon_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	weapon_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row.add_child(weapon_label)
 
 	var hint := _make_label(
-		"ZQSD / flèches : bouger   ·   Clic ou ESPACE : tirer   ·   1 2 3 : arme   ·   T ou Tab : écrire   ·   ÉCHAP : menu",
+		"ZQSD : bouger   ·   Clic/Espace : tirer   ·   V : Vue FPS / 3D   ·   1 à 6 ou Molette : arme   ·   T ou Tab : écrire",
 		15,
 		Color(0.62, 0.8, 0.95)
 	)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	bvb.add_child(hint)
 
-	reticle = _make_label("+", 30, Color(0.75, 0.95, 1.0, 0.9))
-	reticle.size = Vector2(30, 30)
+	reticle = _make_label("+", 32, Color(0.75, 0.95, 1.0, 0.9))
+	reticle.size = Vector2(32, 32)
 	reticle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	reticle.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	reticle.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ui_root.add_child(reticle)
+
+	hitmarker = _make_label("×", 38, Color(1.0, 0.35, 0.35, 1.0))
+	hitmarker.size = Vector2(38, 38)
+	hitmarker.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hitmarker.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	hitmarker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hitmarker.visible = false
+	ui_root.add_child(hitmarker)
 
 	flash_rect = ColorRect.new()
 	flash_rect.color = Color(1.0, 0.3, 0.35, 0.0)
@@ -547,8 +1000,6 @@ func _build_ui() -> void:
 	ui_root.add_child(flash_rect)
 
 	_build_over()
-
-	# la barre du bas doit rester au-dessus du flash
 	ui_root.move_child(flash_rect, 0)
 
 
@@ -619,7 +1070,9 @@ func _restart() -> void:
 	streak = 0
 	best_streak = 0
 	weapon = 0
+	hazard_kills = 0
 	invuln = 0.0
+	grace_left = GRACE_TIME
 	cd_left = 0.0
 	hazard_timer = SPAWN_EVERY
 	time_left = TURN_TIME
@@ -629,6 +1082,9 @@ func _restart() -> void:
 	input_field.text = ""
 	input_field.release_focus()
 	player.position = Vector3(0, 0, 3.5)
+	view_pitch = 0.0
+	view_yaw = 0.0
+	_update_weapon_nodes()
 	_new_question()
 
 
@@ -715,7 +1171,11 @@ func _update_hud() -> void:
 	hud_left.text = "Score %d   ·   Série x%d   ·   Meilleur %d" % [score, streak, best]
 	hearts_label.text = hearts_txt
 	var w: Dictionary = weapons[weapon]
-	weapon_label.text = "Arme %d · %s" % [weapon + 1, str(w.get("name", ""))]
+	weapon_label.text = "[Arme %d/6] %s\n%s" % [
+		weapon + 1,
+		str(w.get("name", "")),
+		str(w.get("desc", ""))
+	]
 
 
 func _set_weapon(i: int) -> void:
@@ -724,21 +1184,30 @@ func _set_weapon(i: int) -> void:
 	weapon = i
 	cd_left = 0.0
 	_play("click")
+	_update_weapon_nodes()
 	_update_hud()
-	feedback.text = "%s sélectionnée" % str(weapons[weapon].get("name", ""))
+	feedback.text = "%s sélectionnée (%s)" % [
+		str(weapons[weapon].get("name", "")),
+		str(weapons[weapon].get("desc", ""))
+	]
 	feedback.add_theme_color_override("font_color", Color(0.72, 0.9, 1.0))
 
 
 func _aim_point() -> Vector3:
-	var mouse := get_viewport().get_mouse_position()
-	var from := camera.project_ray_origin(mouse)
-	var dir := camera.project_ray_normal(mouse)
-	if absf(dir.y) < 0.0001:
-		return player.global_position + Vector3(0, 1.3, -6)
-	var t := (1.3 - from.y) / dir.y
-	if t < 0.0:
-		t = 6.0
-	return from + dir * t
+	if fps_mode:
+		var from := camera.global_position
+		var dir := -camera.global_transform.basis.z
+		return from + dir * 18.0
+	else:
+		var mouse := get_viewport().get_mouse_position()
+		var from := camera.project_ray_origin(mouse)
+		var dir := camera.project_ray_normal(mouse)
+		if absf(dir.y) < 0.0001:
+			return player.global_position + Vector3(0, 1.3, -6)
+		var t := (1.3 - from.y) / dir.y
+		if t < 0.0:
+			t = 6.0
+		return from + dir * t
 
 
 func _physics_process(_delta: float) -> void:
@@ -764,10 +1233,19 @@ func _physics_process(_delta: float) -> void:
 
 	if move.length() > 1.0:
 		move = move.normalized()
-	player.velocity = Vector3(move.x, 0, move.y) * speed
+
+	if fps_mode:
+		# Déplacement relatif à l'orientation de la caméra FPS
+		var forward := Vector3(-sin(view_yaw), 0, -cos(view_yaw))
+		var right := Vector3(cos(view_yaw), 0, -sin(view_yaw))
+		var world_move := (forward * (-move.y) + right * move.x) * speed
+		player.velocity = world_move
+	else:
+		player.velocity = Vector3(move.x, 0, move.y) * speed
+
 	player.move_and_slide()
-	player.position.x = clampf(player.position.x, -3.6, 3.6)
-	player.position.z = clampf(player.position.z, 0.0, 5.0)
+	player.position.x = clampf(player.position.x, -7.0, 7.0)
+	player.position.z = clampf(player.position.z, -1.0, 6.0)
 	player.position.y = 0.0
 
 
@@ -776,33 +1254,67 @@ func _process(delta: float) -> void:
 		return
 	t_accum += delta
 
-	# caméra qui suit le joueur
-	var desired := player.global_position + Vector3(0, 8.2, 10.4)
-	var k := 1.0 - exp(-6.5 * delta)
-	camera.global_position = camera.global_position.lerp(desired, k)
-	camera.look_at(player.global_position + Vector3(0, 1.0, -4.6))
+	# Amortissement du recul et du screenshake
+	recoil_pos = recoil_pos.lerp(Vector3.ZERO, 1.0 - exp(-16.0 * delta))
+	recoil_rot = recoil_rot.lerp(Vector3.ZERO, 1.0 - exp(-16.0 * delta))
+	shake_strength = maxf(0.0, shake_strength - delta * 5.0)
+	var shake := Vector3(randf_range(-1, 1), randf_range(-1, 1), randf_range(-1, 1)) * shake_strength
 
-	# le personnage regarde le curseur
-	var aim := _aim_point()
-	var look := aim - player.global_position
-	if Vector2(look.x, look.z).length() > 0.15:
-		var want := atan2(look.x, look.z)
-		visual.rotation.y = lerp_angle(visual.rotation.y, want, 1.0 - exp(-14.0 * delta))
+	# Gestion de la caméra (FPS ou 3ème personne)
+	if fps_mode:
+		camera.global_position = player.global_position + Vector3(0, 1.55, 0) + shake
+		camera.rotation = Vector3(view_pitch, view_yaw, 0)
+		player.rotation.y = view_yaw
 
-	# halo au sol suit la visée
-	marble.global_position = Vector3(aim.x, 0.03, aim.z)
+		# Sway et animation d'inertie de l'arme en 1ère personne
+		var move_speed := player.velocity.length()
+		var sway_x := sin(t_accum * 5.0) * 0.015 * (move_speed / PLAYER_SPEED)
+		var sway_y := absf(cos(t_accum * 10.0)) * 0.018 * (move_speed / PLAYER_SPEED)
+		fps_rig.position = Vector3(0.32, -0.26, -0.52) + recoil_pos + Vector3(sway_x, sway_y, 0)
+		fps_rig.rotation = recoil_rot
 
-	# curseur
-	reticle.global_position = get_viewport().get_mouse_position() - reticle.size * 0.5
+		# En FPS, le viseur est fixé au centre
+		var center := get_viewport().get_visible_rect().size * 0.5
+		reticle.global_position = center - reticle.size * 0.5
+		hitmarker.global_position = center - hitmarker.size * 0.5
+	else:
+		var desired := player.global_position + Vector3(0, 8.2, 10.4) + shake
+		var k := 1.0 - exp(-6.5 * delta)
+		camera.global_position = camera.global_position.lerp(desired, k)
+		camera.look_at(player.global_position + Vector3(0, 1.0, -4.6))
+
+		# Le personnage regarde le curseur
+		var aim := _aim_point()
+		var look := aim - player.global_position
+		if Vector2(look.x, look.z).length() > 0.15:
+			var want := atan2(look.x, look.z)
+			visual.rotation.y = lerp_angle(visual.rotation.y, want, 1.0 - exp(-14.0 * delta))
+
+		marble.global_position = Vector3(aim.x, 0.03, aim.z)
+		var mpos := get_viewport().get_mouse_position()
+		reticle.global_position = mpos - reticle.size * 0.5
+		hitmarker.global_position = mpos - hitmarker.size * 0.5
+
+	# Timer hitmarker
+	if hitmarker_timer > 0.0:
+		hitmarker_timer -= delta
+		if hitmarker_timer <= 0.0:
+			hitmarker.visible = false
+
+	# Timer bannière Level Up
+	if banner_timer > 0.0:
+		banner_timer -= delta
+		if banner_timer <= 0.0:
+			banner_label.visible = false
 
 	if not game_over:
 		if cd_left > 0.0:
 			cd_left = maxf(0.0, cd_left - delta)
 		if invuln > 0.0:
 			invuln = maxf(0.0, invuln - delta)
-			marble.visible = fmod(invuln, 0.2) > 0.1
+			marble.visible = (not fps_mode) and (fmod(invuln, 0.2) > 0.1)
 		else:
-			marble.visible = true
+			marble.visible = not fps_mode
 
 		if accepting:
 			time_left = maxf(0.0, time_left - delta)
@@ -829,12 +1341,13 @@ func _process(delta: float) -> void:
 
 		if accepting:
 			hazard_timer -= delta
+			grace_left = maxf(0.0, grace_left - delta)
 			if hazard_timer <= 0.0:
-				hazard_timer = SPAWN_EVERY + randf() * 3.0
+				hazard_timer = SPAWN_EVERY + randf() * 2.5
 				if hazards.size() < MAX_HAZARDS:
 					_spawn_hazard()
 
-	# bourrasques
+	# Bourrasques (monstres de neige qui suivent le joueur)
 	for h in hazards.duplicate():
 		if not is_instance_valid(h):
 			continue
@@ -843,16 +1356,16 @@ func _process(delta: float) -> void:
 		var d: float = to.length()
 		if d > 0.05:
 			var dirv: Vector3 = to / d
-			h.global_position += dirv * float(h.get_meta("speed", 3.5)) * delta
-		h.rotation.y += delta * 2.2
-		h.position.y = 0.95 + sin(t_accum * 3.0 + float(h.get_meta("phase", 0.0))) * 0.18
-		if d < 1.15:
+			h.global_position += dirv * float(h.get_meta("speed", 3.2)) * delta
+		h.rotation.y += delta * 2.5
+		h.position.y = 0.95 + sin(t_accum * 3.5 + float(h.get_meta("phase", 0.0))) * 0.22
+		if d < 1.15 and grace_left <= 0.0:
 			_pop_hazard(h, false)
 			_hurt()
 
-	# survol des cibles
-	var mouse := get_viewport().get_mouse_position()
-	var hover := _pick_target(mouse)
+	# Survol des cibles
+	var aim_s := (get_viewport().get_visible_rect().size * 0.5) if fps_mode else get_viewport().get_mouse_position()
+	var hover := _pick_target(aim_s)
 	for i in range(targets.size()):
 		if not is_instance_valid(targets[i]):
 			continue
@@ -861,7 +1374,7 @@ func _process(delta: float) -> void:
 		target_mats[i].albedo_color = Color(0.2, 0.58, 0.82) if on else Color(0.13, 0.42, 0.62)
 		target_nums[i].modulate = Color(1.0, 0.95, 0.6) if on else Color(0.7, 0.9, 1.0)
 
-	# flash de dégât
+	# Flash de dégât
 	if flash_alpha > 0.0:
 		flash_alpha = maxf(0.0, flash_alpha - delta * 2.2)
 		flash_rect.color = Color(1.0, 0.32, 0.36, flash_alpha)
@@ -872,19 +1385,43 @@ func _process(delta: float) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if not built or game_over:
 		return
+
+	# Orientation FPS par mouvement de souris
+	if fps_mode and event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		view_yaw -= event.relative.x * 0.0032
+		view_pitch = clampf(view_pitch - event.relative.y * 0.0032, -1.15, 1.15)
+		return
+
 	if event is InputEventMouseButton:
 		if event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			if fps_mode and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED and not input_field.has_focus():
+				Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 			_try_fire()
 			get_viewport().set_input_as_handled()
+		elif event.pressed and event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			_set_weapon((weapon - 1 + weapons.size()) % weapons.size())
+			get_viewport().set_input_as_handled()
+		elif event.pressed and event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			_set_weapon((weapon + 1) % weapons.size())
+			get_viewport().set_input_as_handled()
 		return
+
 	if not (event is InputEventKey):
 		return
 	if not event.pressed or event.echo:
 		return
+
 	var code: int = event.keycode
 	var phys: int = event.physical_keycode
+
 	if code == KEY_ESCAPE:
-		exit_arena()
+		if fps_mode and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+		else:
+			exit_arena()
+		get_viewport().set_input_as_handled()
+	elif code == KEY_V or phys == KEY_V:
+		_toggle_fps()
 		get_viewport().set_input_as_handled()
 	elif code == KEY_SPACE or phys == KEY_SPACE:
 		_try_fire()
@@ -895,9 +1432,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		_set_weapon(1)
 	elif code == KEY_3 or phys == KEY_3 or code == KEY_KP_3:
 		_set_weapon(2)
-	elif code == KEY_T or phys == KEY_T:
-		input_field.grab_focus()
-	elif code == KEY_TAB or phys == KEY_TAB:
+	elif code == KEY_4 or phys == KEY_4 or code == KEY_KP_4:
+		_set_weapon(3)
+	elif code == KEY_5 or phys == KEY_5 or code == KEY_KP_5:
+		_set_weapon(4)
+	elif code == KEY_6 or phys == KEY_6 or code == KEY_KP_6:
+		_set_weapon(5)
+	elif code == KEY_T or phys == KEY_T or code == KEY_TAB or phys == KEY_TAB:
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 		input_field.grab_focus()
 		get_viewport().set_input_as_handled()
 
@@ -907,34 +1449,76 @@ func _try_fire() -> void:
 		return
 	if input_field.has_focus():
 		return
-	cd_left = float(weapons[weapon].get("cd", 0.3))
-	var mouse := get_viewport().get_mouse_position()
-	var ti := _pick_target(mouse)
-	if ti >= 0:
-		_shot_effect(targets[ti].global_position)
-		_play("shot")
-		_resolve(ti, false)
-		return
-	var hi := _pick_hazard(mouse)
+
+	var w: Dictionary = weapons[weapon]
+	var wtype: String = str(w.get("type", "pistol"))
+	cd_left = float(w.get("cd", 0.3))
+
+	# Recul d'arme dynamique
+	recoil_pos = Vector3(0.02, 0.035, 0.14)
+	recoil_rot = Vector3(0.20, 0.05, -0.04)
+
+	var aim_s := (get_viewport().get_visible_rect().size * 0.5) if fps_mode else get_viewport().get_mouse_position()
+
+	# Détection prioritaire sur les monstres de neige qui approchent
+	var hi := _pick_hazard(aim_s)
+	var ti := _pick_target(aim_s)
+
 	if hi >= 0:
 		var h = hazards[hi]
 		if is_instance_valid(h):
-			_shot_effect(h.global_position)
+			_fire_shot_effect(h.global_position, wtype)
 			_pop_hazard(h, true)
-			score += 2
+			score += 3
+			hazard_kills += 1
+			_show_hitmarker()
 			_update_hud()
 			_play("boom")
+			if gun_game_mode and hazard_kills >= 2:
+				hazard_kills = 0
+				_advance_gun()
+			return
+
+	if ti >= 0:
+		_fire_shot_effect(targets[ti].global_position, wtype)
+		_play("shot")
+		_show_hitmarker()
+		_resolve(ti, false)
 		return
-	# tir dans le vide : juste l'effet
-	_shot_effect(_aim_point())
-	_play("shot")
+
+	# Tir dans le vide ou tir de zone (Fusil à pompe / Lance-roquettes)
+	var aim3d := _aim_point()
+	_fire_shot_effect(aim3d, wtype)
+
+	# Si c'est un lance-roquettes, explosion de zone qui nettoie les monstres alentour !
+	if wtype == "bazooka":
+		shake_strength = 0.35
+		_play("boom")
+		for h in hazards.duplicate():
+			if is_instance_valid(h) and h.global_position.distance_to(aim3d) < 5.8:
+				_pop_hazard(h, true)
+				score += 3
+				_show_hitmarker()
+	elif wtype == "shotgun":
+		shake_strength = 0.15
+		_play("shot")
+		for h in hazards.duplicate():
+			if is_instance_valid(h) and h.global_position.distance_to(aim3d) < 3.8:
+				_pop_hazard(h, true)
+				score += 3
+				_show_hitmarker()
+	elif wtype == "sniper":
+		shake_strength = 0.22
+		_play("shot")
+	else:
+		_play("shot")
 
 
-func _pick_target(mouse: Vector2) -> int:
+func _pick_target(screen_pos: Vector2) -> int:
 	if camera == null:
 		return -1
-	var best := -1
-	var best_d := float(weapons[weapon].get("assist", 50.0))
+	var best_idx := -1
+	var best_d := float(weapons[weapon].get("assist", 80.0))
 	for i in range(targets.size()):
 		var t: Node3D = targets[i]
 		if not is_instance_valid(t) or not t.visible:
@@ -943,16 +1527,16 @@ func _pick_target(mouse: Vector2) -> int:
 		if camera.is_position_behind(wp):
 			continue
 		var sp := camera.unproject_position(wp)
-		var d := sp.distance_to(mouse)
+		var d := sp.distance_to(screen_pos)
 		if d < best_d:
 			best_d = d
-			best = i
-	return best
+			best_idx = i
+	return best_idx
 
 
-func _pick_hazard(mouse: Vector2) -> int:
-	var best := -1
-	var best_d := float(weapons[weapon].get("hazard_assist", 30.0))
+func _pick_hazard(screen_pos: Vector2) -> int:
+	var best_idx := -1
+	var best_d := float(weapons[weapon].get("hazard_assist", 55.0))
 	for i in range(hazards.size()):
 		var h = hazards[i]
 		if not is_instance_valid(h):
@@ -960,11 +1544,11 @@ func _pick_hazard(mouse: Vector2) -> int:
 		var wp: Vector3 = h.global_position
 		if camera.is_position_behind(wp):
 			continue
-		var d := camera.unproject_position(wp).distance_to(mouse)
+		var d := camera.unproject_position(wp).distance_to(screen_pos)
 		if d < best_d:
 			best_d = d
-			best = i
-	return best
+			best_idx = i
+	return best_idx
 
 
 func _on_text_submitted(text: String) -> void:
@@ -982,7 +1566,6 @@ func _on_text_submitted(text: String) -> void:
 			target = i
 			break
 	if target < 0:
-		# tolérance : réponse écrite plus courte (« 12 » pour « 12 cm »), si un seul candidat
 		var matches: Array = []
 		for i in range(opts.size()):
 			var o := _norm(str(opts[i]))
@@ -991,6 +1574,13 @@ func _on_text_submitted(text: String) -> void:
 		if matches.size() == 1:
 			target = int(matches[0])
 	input_field.release_focus()
+	if fps_mode:
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+	# Tir automatique guidé sur la cible correspondante
+	if target >= 0 and target < targets.size():
+		_fire_shot_effect(targets[target].global_position, str(weapons[weapon].get("type", "bazooka")))
+
 	if target == ans:
 		_resolve(target, true)
 	elif target >= 0:
@@ -1046,6 +1636,8 @@ func _resolve(index: int, typed: bool) -> void:
 		feedback.text = msg
 		feedback.add_theme_color_override("font_color", Color(0.6, 1.0, 0.72))
 		_play("ok")
+		if gun_game_mode:
+			_advance_gun()
 		resolve_timer = GOOD_PAUSE
 	else:
 		streak = 0
@@ -1110,6 +1702,7 @@ func _show_game_over() -> void:
 		return
 	game_over = true
 	accepting = false
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	_clear_hazards()
 	over_root.visible = true
 	over_score.text = "Score : %d   ·   Meilleure série : x%d" % [score, best_streak]
@@ -1122,16 +1715,15 @@ func _show_game_over() -> void:
 
 
 func exit_arena() -> void:
-	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	exited.emit()
 
 
-# ---------- bourrasques ----------
+# ---------- bourrasques (monstres de neige) ----------
 
 func _spawn_hazard() -> void:
 	var h := Node3D.new()
 	h.name = "Bourrasque"
-	# toujours devant le joueur, pour rester visible et esquivable
 	var off := Vector3(randf_range(-9.0, 9.0), 0.95, randf_range(-11.0, -4.5))
 	var base := player.global_position + off
 	if base.length() > 14.0:
@@ -1139,35 +1731,49 @@ func _spawn_hazard() -> void:
 	base.y = 0.95
 	h.position = base
 	h.add_child(_snowball())
-	h.set_meta("speed", 2.9 + randf() * 1.6)
+	h.set_meta("speed", 2.0 + randf() * 1.2)
 	h.set_meta("phase", randf() * TAU)
 	hazard_root.add_child(h)
 	hazards.append(h)
 
 
-func _snowball() -> MeshInstance3D:
-	var mi := MeshInstance3D.new()
-	mi.mesh = _sphere(0.55)
+func _snowball() -> Node3D:
+	var root := Node3D.new()
+	var body := MeshInstance3D.new()
+	body.mesh = _sphere(0.55)
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = Color(0.93, 0.98, 1.0)
 	mat.roughness = 0.4
 	mat.emission_enabled = true
 	mat.emission = Color(0.35, 0.6, 0.9)
-	mat.emission_energy_multiplier = 0.25
-	mi.material_override = mat
-	# quelques piques pour lire la menace
+	mat.emission_energy_multiplier = 0.35
+	body.material_override = mat
+	root.add_child(body)
+
+	# Yeux bleus lumineux pour repérer les créatures
+	for eye_x in [-0.18, 0.18]:
+		var eye := MeshInstance3D.new()
+		eye.mesh = _sphere(0.08)
+		var emat := StandardMaterial3D.new()
+		emat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		emat.albedo_color = Color(0.2, 0.95, 1.0)
+		eye.material_override = emat
+		eye.position = Vector3(eye_x, 0.16, 0.48)
+		root.add_child(eye)
+
+	# Piques de glace
 	for i in range(4):
 		var a := float(i) / 4.0 * TAU
 		var spike := MeshInstance3D.new()
 		var sm := CylinderMesh.new()
 		sm.top_radius = 0.0
-		sm.bottom_radius = 0.16
-		sm.height = 0.42
+		sm.bottom_radius = 0.15
+		sm.height = 0.45
 		spike.mesh = sm
-		spike.material_override = _mat(Color(0.55, 0.8, 1.0), 0.5)
-		spike.position = Vector3(cos(a) * 0.42, 0.28, sin(a) * 0.42)
-		mi.add_child(spike)
-	return mi
+		spike.material_override = _mat(Color(0.55, 0.82, 1.0), 0.4)
+		spike.position = Vector3(cos(a) * 0.45, 0.28, sin(a) * 0.45)
+		root.add_child(spike)
+	return root
 
 
 func _pop_hazard(h: Node3D, destroyed: bool) -> void:
@@ -1176,7 +1782,8 @@ func _pop_hazard(h: Node3D, destroyed: bool) -> void:
 	hazards.erase(h)
 	var pos := h.global_position
 	if destroyed:
-		_burst(pos, Color(0.75, 0.92, 1.0))
+		_burst(pos, Color(0.75, 0.95, 1.0))
+		_spawn_floating_text(pos + Vector3(0, 0.8, 0), "+3", Color(0.4, 1.0, 0.6))
 	h.queue_free()
 
 
@@ -1187,44 +1794,125 @@ func _clear_hazards() -> void:
 	hazards.clear()
 
 
-# ---------- effets ----------
+# ---------- effets & tirs ----------
 
-func _shot_effect(target_pos: Vector3) -> void:
-	var muzzle := visual.to_global(Vector3(0.34, 0.98, 0.9))
-	# éclair au canon
+func _fire_shot_effect(target_pos: Vector3, wtype: String) -> void:
+	var muzzle: Vector3
+	if fps_mode:
+		muzzle = camera.global_position + (-camera.global_transform.basis.z * 0.4) + (camera.global_transform.basis.x * 0.25) + (camera.global_transform.basis.y * -0.18)
+	else:
+		muzzle = visual.to_global(Vector3(0.34, 0.98, 0.9))
+
+	# Flash au canon
 	var flash := MeshInstance3D.new()
-	flash.mesh = _sphere(0.2)
+	flash.mesh = _sphere(0.25 if wtype != "bazooka" else 0.45)
 	var fm := StandardMaterial3D.new()
 	fm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	fm.albedo_color = Color(1.0, 0.95, 0.6)
+	fm.albedo_color = Color(1.0, 0.95, 0.6) if wtype != "bow" else Color(0.4, 0.95, 1.0)
 	flash.material_override = fm
 	add_child(flash)
 	flash.global_position = muzzle
 	var t1 := create_tween()
-	t1.tween_property(flash, "scale", Vector3(2.6, 2.6, 2.6), 0.08)
+	t1.tween_property(flash, "scale", Vector3(2.5, 2.5, 2.5), 0.08)
 	t1.parallel().tween_property(flash, "scale", Vector3.ZERO, 0.12).set_delay(0.08)
 	t1.finished.connect(flash.queue_free)
 
-	# trace lumineuse
-	var tracer := MeshInstance3D.new()
-	tracer.mesh = _sphere(0.09)
-	var tm := StandardMaterial3D.new()
-	tm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	tm.albedo_color = Color(0.7, 0.93, 1.0)
-	tracer.material_override = tm
-	add_child(tracer)
-	tracer.global_position = muzzle
-	var t2 := create_tween()
-	t2.tween_property(tracer, "global_position", target_pos, 0.07)
-	t2.finished.connect(tracer.queue_free)
+	match wtype:
+		"bow":
+			# Flèche traçante rapide
+			var arrow := MeshInstance3D.new()
+			var cyl := CylinderMesh.new()
+			cyl.top_radius = 0.02
+			cyl.bottom_radius = 0.02
+			cyl.height = 0.65
+			arrow.mesh = cyl
+			var amat := StandardMaterial3D.new()
+			amat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			amat.albedo_color = Color(0.5, 0.95, 1.0)
+			arrow.material_override = amat
+			add_child(arrow)
+			arrow.global_position = muzzle
+			arrow.look_at(target_pos)
+			var tw := create_tween()
+			tw.tween_property(arrow, "global_position", target_pos, 0.08)
+			tw.finished.connect(arrow.queue_free)
+			_burst(target_pos, Color(0.55, 0.92, 1.0))
 
-	_burst(target_pos, Color(0.72, 0.94, 1.0))
+		"shotgun":
+			# 5 plombs en gerbe
+			for k in range(5):
+				var tracer := MeshInstance3D.new()
+				tracer.mesh = _sphere(0.08)
+				var tm := StandardMaterial3D.new()
+				tm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+				tm.albedo_color = Color(0.85, 0.95, 1.0)
+				tracer.material_override = tm
+				add_child(tracer)
+				tracer.global_position = muzzle
+				var spread := Vector3(randf_range(-0.8, 0.8), randf_range(-0.6, 0.6), randf_range(-0.4, 0.4))
+				var tw := create_tween()
+				tw.tween_property(tracer, "global_position", target_pos + spread, 0.07)
+				tw.finished.connect(tracer.queue_free)
+			_burst(target_pos, Color(0.7, 0.9, 1.0))
+
+		"sniper":
+			# Rayon laser instantané puissant
+			var beam := MeshInstance3D.new()
+			var bm := CylinderMesh.new()
+			bm.top_radius = 0.04
+			bm.bottom_radius = 0.04
+			var dist := muzzle.distance_to(target_pos)
+			bm.height = dist
+			beam.mesh = bm
+			var bmat := StandardMaterial3D.new()
+			bmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			bmat.albedo_color = Color(0.3, 0.9, 1.0)
+			beam.material_override = bmat
+			add_child(beam)
+			beam.global_position = (muzzle + target_pos) * 0.5
+			beam.look_at(target_pos)
+			beam.rotate_object_local(Vector3.RIGHT, PI * 0.5)
+			var tw := create_tween()
+			tw.tween_property(beam, "scale", Vector3(0.01, 1.0, 0.01), 0.16)
+			tw.finished.connect(beam.queue_free)
+			_burst(target_pos, Color(0.4, 0.95, 1.0))
+
+		"bazooka":
+			# Roquette explosive
+			var rocket := MeshInstance3D.new()
+			rocket.mesh = _sphere(0.18)
+			var rmat := StandardMaterial3D.new()
+			rmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			rmat.albedo_color = Color(1.0, 0.85, 0.3)
+			rocket.material_override = rmat
+			add_child(rocket)
+			rocket.global_position = muzzle
+			var tw := create_tween()
+			tw.tween_property(rocket, "global_position", target_pos, 0.10)
+			tw.finished.connect(rocket.queue_free)
+			# Explosion massive
+			_burst(target_pos, Color(1.0, 0.85, 0.4))
+			_burst(target_pos, Color(0.45, 0.85, 1.0))
+
+		_: # Pistolet & Mitrailleuse
+			var tracer := MeshInstance3D.new()
+			tracer.mesh = _sphere(0.09)
+			var tm := StandardMaterial3D.new()
+			tm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			tm.albedo_color = Color(0.7, 0.93, 1.0)
+			tracer.material_override = tm
+			add_child(tracer)
+			tracer.global_position = muzzle
+			var t2 := create_tween()
+			t2.tween_property(tracer, "global_position", target_pos, 0.07)
+			t2.finished.connect(tracer.queue_free)
+			_burst(target_pos, Color(0.72, 0.94, 1.0))
 
 
 func _burst(pos: Vector3, color: Color) -> void:
-	for k in range(7):
+	for k in range(8):
 		var s := MeshInstance3D.new()
-		s.mesh = _sphere(0.1)
+		s.mesh = _sphere(0.12)
 		var mat := StandardMaterial3D.new()
 		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 		mat.albedo_color = color
@@ -1234,9 +1922,27 @@ func _burst(pos: Vector3, color: Color) -> void:
 		var d := Vector3(randf_range(-1, 1), randf_range(0.3, 1.0), randf_range(-1, 1)).normalized()
 		var tw := create_tween()
 		tw.set_parallel(true)
-		tw.tween_property(s, "global_position", pos + d * randf_range(1.2, 2.8) + Vector3(0, 0.9, 0), 0.5).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
-		tw.tween_property(s, "scale", Vector3.ZERO, 0.5)
+		tw.tween_property(s, "global_position", pos + d * randf_range(1.4, 3.2) + Vector3(0, 0.9, 0), 0.55).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
+		tw.tween_property(s, "scale", Vector3.ZERO, 0.55)
 		tw.finished.connect(s.queue_free)
+
+
+func _spawn_floating_text(pos: Vector3, text: String, color: Color) -> void:
+	var lab := Label3D.new()
+	lab.text = text
+	lab.font_size = 48
+	lab.pixel_size = 0.012
+	lab.outline_size = 12
+	lab.outline_modulate = Color(0.02, 0.08, 0.15, 0.9)
+	lab.modulate = color
+	lab.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	add_child(lab)
+	lab.global_position = pos
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(lab, "position:y", pos.y + 1.2, 0.6).set_ease(Tween.EASE_OUT)
+	tw.tween_property(lab, "modulate:a", 0.0, 0.6).set_delay(0.2)
+	tw.finished.connect(lab.queue_free)
 
 
 func _pop_target(i: int, good: bool) -> void:
@@ -1253,9 +1959,9 @@ func _pop_target(i: int, good: bool) -> void:
 
 # ---------- utilitaires ----------
 
-func _play(name: String) -> void:
+func _play(sname: String) -> void:
 	if host != null and host.has_method("_play"):
-		host._play(name)
+		host._play(sname)
 
 
 func _mat(color: Color, rough := 0.65) -> StandardMaterial3D:
