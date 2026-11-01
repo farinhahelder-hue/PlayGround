@@ -1813,6 +1813,8 @@ func _pop_hazard(h: Node3D, destroyed: bool) -> void:
 	if destroyed:
 		_burst(pos, Color(0.75, 0.95, 1.0))
 		_spawn_floating_text(pos + Vector3(0, 0.8, 0), "+3", Color(0.4, 1.0, 0.6))
+		if host != null and host.has_method("_play"):
+			host._play("boom")
 	h.queue_free()
 
 
