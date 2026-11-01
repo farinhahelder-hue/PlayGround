@@ -215,7 +215,21 @@ func _build_arena() -> void:
 	water.position.y = -0.9
 	add_child(water)
 
-	# sol praticable
+	# props physiques (blocs de glace)
+	for i in range(6):
+		var rb := RigidBody3D.new()
+		rb.position = Vector3(randf_range(-4.0, 4.0), 2.0 + i * 0.6, randf_range(-4.0, 4.0))
+		var mesh := MeshInstance3D.new()
+		mesh.mesh = BoxMesh.new()
+		mesh.mesh.size = Vector3(0.8, 0.8, 0.8)
+		mesh.material_override = _mat(Color(0.7, 0.9, 1.0), 0.3)
+		rb.add_child(mesh)
+		var c := CollisionShape3D.new()
+		var bs := BoxShape3D.new()
+		bs.size = Vector3(0.8, 0.8, 0.8)
+		c.shape = bs
+		rb.add_child(c)
+		add_child(rb)
 	var floor_body := StaticBody3D.new()
 	floor_body.collision_layer = 1
 	floor_body.collision_mask = 0
