@@ -1495,7 +1495,7 @@ func _try_fire() -> void:
 
 	if ti >= 0:
 		_fire_shot_effect(targets[ti].global_position, wtype)
-		_play("shot")
+		_play("shot" + str(weapon))
 		_show_hitmarker()
 		_resolve(ti, false)
 		return
@@ -1515,7 +1515,7 @@ func _try_fire() -> void:
 				_show_hitmarker()
 	elif wtype == "shotgun":
 		shake_strength = 0.15
-		_play("shot")
+		_play("shot" + str(weapon))
 		for h in hazards.duplicate():
 			if is_instance_valid(h) and h.global_position.distance_to(aim3d) < 3.8:
 				_pop_hazard(h, true)
@@ -1523,9 +1523,9 @@ func _try_fire() -> void:
 				_show_hitmarker()
 	elif wtype == "sniper":
 		shake_strength = 0.22
-		_play("shot")
+		_play("shot" + str(weapon))
 	else:
-		_play("shot")
+		_play("shot" + str(weapon))
 
 
 func _pick_target(screen_pos: Vector2) -> int:
