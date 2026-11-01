@@ -168,6 +168,7 @@ var over_score: Label
 var over_meta: Label
 var t_accum := 0.0
 var flash_alpha := 0.0
+var muzzle_timer := 0.0
 
 
 func setup(level: String, char_idx: int, host_node: Node) -> void:
@@ -340,6 +341,16 @@ func _build_player() -> void:
 	visual = Node3D.new()
 	visual.name = "Perso"
 	player.add_child(visual)
+
+	# muzzle flash
+	var mf := MeshInstance3D.new()
+	mf.name = "MuzzleFlash"
+	mf.mesh = SphereMesh.new()
+	mf.mesh.radius = 0.18
+	mf.material_override = _mat(Color(1, 0.9, 0.4), 0.2)
+	mf.visible = false
+	visual.add_child(mf)
+	mf.position = Vector3(0, 1.2, 0.6)
 
 	var body: Node3D = null
 	if host != null and host.has_method("_make_char"):
@@ -1391,6 +1402,9 @@ func _process(delta: float) -> void:
 	# Flash de dégât
 	if flash_alpha > 0.0:
 		flash_alpha = maxf(0.0, flash_alpha - delta * 2.2)
+	muzzle_timer = maxf(0.0, muzzle_timer - delta)
+	if visual != null and visual.has_node("MuzzleFlash"):
+		visual.get_node("MuzzleFlash").visible = muzzle_timer > 0.0
 		flash_rect.color = Color(1.0, 0.32, 0.36, flash_alpha)
 
 
@@ -1467,6 +1481,7 @@ func _try_fire() -> void:
 	var w: Dictionary = weapons[weapon]
 	var wtype: String = str(w.get("type", "pistol"))
 	cd_left = float(w.get("cd", 0.3))
+	muzzle_timer = 0.05
 
 	# Recul d'arme dynamique
 	recoil_pos = Vector3(0.02, 0.035, 0.14)
