@@ -2,3 +2,6 @@
 .godot/
 /android/
 godot/build/
+
+# binaires d'export à la racine
+/banquise*.exe

@@ -31,6 +31,8 @@ func _run() -> void:
 	await process_frame
 	a = main.action_mode
 	_check(a != null, "arène non instanciée")
+	a.save_path = "user://action_test.cfg"
+	a.best = 0
 	_check(not main.menu_root.visible, "menu encore visible dans l'arène")
 	_check(not main.ui.visible, "HUD quiz encore visible dans l'arène")
 
@@ -83,15 +85,41 @@ func _run() -> void:
 	a.debug_skip()
 
 	# armes
-	a.debug_set_weapon(1)
-	_check(int(_state()["weapon"]) == 1, "arme 2 non sélectionnée")
-	a.debug_set_weapon(2)
-	_check(int(_state()["weapon"]) == 2, "arme 3 non sélectionnée")
+	for i in range(6):
+		a.debug_set_weapon(i)
+		_check(int(_state()["weapon"]) == i, "arme %d non sélectionnée" % (i + 1))
+		a._fire_shot_effect(Vector3(0, 1.5, -6), str(a.weapons[i]["type"]))
 	a.debug_set_weapon(0)
+	a._advance_gun()
+	_check(int(_state()["weapon"]) == 1, "progression d'arme (gun game) inopérante")
+	a.debug_set_weapon(0)
+
+	# vue FPS / 3e personne
+	a._toggle_fps()
+	_check(bool(a.fps_mode), "mode FPS non activé")
+	a._toggle_fps()
+	_check(not bool(a.fps_mode), "retour 3e personne raté")
 
 	# bourrasque
 	a.debug_spawn_hazard()
 	_check(int(_state()["hazards"]) == 1, "bourrasque non créée")
+
+	# le programme CE2 tourne sur les 7 thèmes, sans doublon ni question vide
+	var seen_themes := {}
+	for i in range(60):
+		var qs := _state()
+		var qopts: Array = qs["opts"]
+		_check(str(qs["question"]) != "" and str(qs["question"]).find("${") < 0, "question CE2 invalide")
+		_check(qopts.size() >= 2 and qopts.size() <= 4, "options CE2 invalides")
+		var uniq := {}
+		for o in qopts:
+			uniq[str(o)] = true
+		_check(uniq.size() == qopts.size(), "options dupliquées : %s" % str(qopts))
+		seen_themes[str(qs["theme"])] = true
+		a.debug_shoot(int(qs["ans"]))
+		a.debug_skip()
+	_check(seen_themes.size() == 7, "thèmes CE2 incomplets : %s" % str(seen_themes.keys()))
+	a.debug_set_weapon(0)
 
 	# fin de partie
 	a.debug_lose_hearts(3)
@@ -118,6 +146,10 @@ func _run() -> void:
 	await process_frame
 	await process_frame
 	_check(main.action_mode == null, "seconde arène non libérée")
+
+	var abs := ProjectSettings.globalize_path("user://action_test.cfg")
+	if FileAccess.file_exists(abs):
+		DirAccess.remove_absolute(abs)
 
 	if failures.is_empty():
 		print("ARENE OK — déplacement, cibles, réponse écrite, armes, dégâts, fin de partie")

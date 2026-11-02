@@ -99,6 +99,7 @@ var niveau := "CE2"
 var char_index := 0
 var host: Node = null
 var built := false
+var save_path := "user://banquise_action.cfg"
 
 var hearts := MAX_HEARTS
 var score := 0
@@ -193,13 +194,13 @@ func setup(level: String, char_idx: int, host_node: Node) -> void:
 
 func _load_best() -> void:
 	var cfg := ConfigFile.new()
-	if cfg.load("user://banquise_action.cfg") == OK:
+	if cfg.load(save_path) == OK:
 		best = int(cfg.get_value("arene", "best", 0))
 
 func _save_best() -> void:
 	var cfg := ConfigFile.new()
 	cfg.set_value("arene", "best", best)
-	cfg.save("user://banquise_action.cfg")
+	cfg.save(save_path)
 
 
 # ---------- construction 3D ----------
@@ -216,10 +217,19 @@ func _build_arena() -> void:
 	water.position.y = -0.9
 	add_child(water)
 
-	# props physiques (blocs de glace)
-	for i in range(6):
+	# props physiques (blocs de glace) placés sur le pourtour, hors du champ de la caméra
+	var cube_spots := [
+		Vector3(-10.6, 0.45, -3.2),
+		Vector3(10.6, 0.45, -3.2),
+		Vector3(-9.4, 0.45, -9.0),
+		Vector3(9.4, 0.45, -9.0),
+		Vector3(-0.4, 0.45, -11.6),
+	]
+	for i in range(cube_spots.size()):
 		var rb := RigidBody3D.new()
-		rb.position = Vector3(randf_range(-4.0, 4.0), 2.0 + i * 0.6, randf_range(-4.0, 4.0))
+		rb.position = cube_spots[i]
+		rb.linear_damp = 3.0
+		rb.angular_damp = 3.0
 		var mesh := MeshInstance3D.new()
 		mesh.mesh = BoxMesh.new()
 		mesh.mesh.size = Vector3(0.8, 0.8, 0.8)
@@ -314,7 +324,7 @@ func _build_arena() -> void:
 	# Rig FPS fixé sur la caméra pour afficher l'arme en vue 1ère personne
 	fps_rig = Node3D.new()
 	fps_rig.name = "FPS_Rig"
-	fps_rig.position = Vector3(0.32, -0.28, -0.55)
+	fps_rig.position = Vector3(0.30, -0.30, -0.78)
 	fps_rig.visible = false
 	camera.add_child(fps_rig)
 
@@ -399,8 +409,10 @@ func _build_player() -> void:
 
 func _build_weapon_mesh(idx: int, is_fps: bool) -> Node3D:
 	var root := Node3D.new()
-	var s: float = 0.85 if is_fps else 0.9
+	var s: float = 0.35 if is_fps else 0.9
 	root.scale = Vector3(s, s, s)
+	if is_fps:
+		root.rotation_degrees = Vector3(6, -16, -6)
 
 	match idx:
 		0: # Arc Givré (Bow)
@@ -1295,7 +1307,7 @@ func _process(delta: float) -> void:
 		var move_speed := player.velocity.length()
 		var sway_x := sin(t_accum * 5.0) * 0.015 * (move_speed / PLAYER_SPEED)
 		var sway_y := absf(cos(t_accum * 10.0)) * 0.018 * (move_speed / PLAYER_SPEED)
-		fps_rig.position = Vector3(0.32, -0.26, -0.52) + recoil_pos + Vector3(sway_x, sway_y, 0)
+		fps_rig.position = Vector3(0.30, -0.30, -0.78) + recoil_pos + Vector3(sway_x, sway_y, 0)
 		fps_rig.rotation = recoil_rot
 
 		# En FPS, le viseur est fixé au centre

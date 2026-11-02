@@ -2,6 +2,7 @@ extends Node3D
 
 const Gen = preload("res://scripts/generators.gd")
 const ActionScene = preload("res://scripts/action.gd")
+const TobogganScene = preload("res://scripts/toboggan.gd")
 
 const THEMES := ["nombres", "mesures", "grammaire", "conjugaison", "sciences", "anglais", "logique"]
 const THEME_LABELS := {
@@ -39,6 +40,7 @@ var sfx: Dictionary = {}
 var tts_voice := ""
 var last_speak_ms := 0
 var action_mode: Node3D = null
+var toboggan_mode: Node3D = null
 var main_cam: Camera3D = null
 var world_props: Array = []
 
@@ -74,10 +76,14 @@ func _ready() -> void:
 	_show_menu()
 	_pick_tts_voice()
 	_maybe_capture()
+	if OS.get_cmdline_user_args().has("--arene"):
+		start_arena()
+	elif OS.get_cmdline_user_args().has("--toboggan"):
+		start_toboggan()
 
 
 func _process(delta: float) -> void:
-	if action_mode != null:
+	if action_mode != null or toboggan_mode != null:
 		return
 	t_accum += delta
 	var cam := get_viewport().get_camera_3d()
@@ -127,6 +133,8 @@ func _build_audio() -> void:
 	sfx["shot1"] = _tone([620, 440, 330], 0.08, 0.12)
 	sfx["shot2"] = _tone([1200, 900, 600], 0.04, 0.08)
 	sfx["shot3"] = _tone([300, 220, 160], 0.12, 0.14)
+	sfx["shot4"] = _tone([1000, 720, 480], 0.06, 0.11)
+	sfx["shot5"] = _tone([140, 95, 70], 0.20, 0.17)
 	sfx["boom"] = _tone([180, 120, 90], 0.16, 0.16)
 	sfx["hurt"] = _tone([260, 180], 0.18, 0.16)
 
@@ -632,6 +640,9 @@ func _build_menu(root: Control) -> void:
 	var arena_btn := _make_button("Arène", Vector2(160, 58), 20)
 	arena_btn.pressed.connect(start_arena)
 	main_row.add_child(arena_btn)
+	var toboggan_btn := _make_button("Toboggan", Vector2(180, 58), 20)
+	toboggan_btn.pressed.connect(start_toboggan)
+	main_row.add_child(toboggan_btn)
 
 	var char_row := HBoxContainer.new()
 	char_row.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -644,7 +655,7 @@ func _build_menu(root: Control) -> void:
 		char_row.add_child(b)
 		char_buttons.append(b)
 
-	var hint := _make_label("Choisis ton personnage, puis joue 5 questions — ou tente l'Arène : bouge, écris et tire !", 16, Color(0.62, 0.78, 0.94))
+	var hint := _make_label("Choisis ton personnage, puis joue 5 questions — ou tente l'Arène / le Toboggan !", 16, Color(0.62, 0.78, 0.94))
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vb.add_child(hint)
 
@@ -802,8 +813,9 @@ func start_duo() -> void:
 
 
 func start_arena() -> void:
-	if action_mode != null:
+	if action_mode != null or toboggan_mode != null:
 		return
+	print("ARENE — ", niveau, " · ", CHAR_NAMES[current_char])
 	playing = false
 	menu_root.visible = false
 	play_root.visible = false
@@ -825,6 +837,43 @@ func _close_arena() -> void:
 		return
 	action_mode.queue_free()
 	action_mode = null
+	if main_cam != null:
+		main_cam.current = true
+	ui.visible = true
+	for p in world_props:
+		p.visible = true
+	for c in chars:
+		c.visible = false
+	if current_char >= 0 and current_char < chars.size():
+		chars[current_char].visible = true
+	_show_menu()
+
+
+func start_toboggan() -> void:
+	if toboggan_mode != null or action_mode != null:
+		return
+	print("TOBOGGAN — ", niveau, " · ", CHAR_NAMES[current_char])
+	playing = false
+	menu_root.visible = false
+	play_root.visible = false
+	results_root.visible = false
+	ui.visible = false
+	for p in world_props:
+		p.visible = false
+	for c in chars:
+		c.visible = false
+	toboggan_mode = TobogganScene.new()
+	add_child(toboggan_mode)
+	toboggan_mode.exited.connect(_close_toboggan)
+	toboggan_mode.setup(niveau, current_char, self)
+	_play("level")
+
+
+func _close_toboggan() -> void:
+	if toboggan_mode == null:
+		return
+	toboggan_mode.queue_free()
+	toboggan_mode = null
 	if main_cam != null:
 		main_cam.current = true
 	ui.visible = true

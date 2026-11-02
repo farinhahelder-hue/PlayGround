@@ -59,13 +59,14 @@ func _run() -> void:
 	a._advance_gun()
 	_check(a.weapon == prev_w + 1, "Gun Game promotion échouée")
 
-	# Test capture d'écran si disponible
-	var tex = root.get_texture()
-	if tex != null:
-		var img := tex.get_image()
-		if img != null:
-			img.save_png("res://capture_arena_fps.png")
-			print("CAPTURE FPS GENEREE")
+	# Test capture d'écran si disponible (pas de rendu en headless)
+	if DisplayServer.get_name() != "headless":
+		var tex = root.get_texture()
+		if tex != null:
+			var img := tex.get_image()
+			if img != null:
+				img.save_png("res://capture_arena_fps.png")
+				print("CAPTURE FPS GENEREE")
 
 	a.exit_arena()
 	await process_frame

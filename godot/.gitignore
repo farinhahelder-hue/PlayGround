@@ -1,3 +1,4 @@
 .godot/
 capture_*.png
+capture_*.png.import
 *.tmp
