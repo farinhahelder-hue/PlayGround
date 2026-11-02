@@ -5,3 +5,21 @@ godot/build/
 
 # binaires d'export à la racine
 /banquise*.exe
+
+screenshots/
+
+*.log
+
+*.pid
+
+.agents/
+
+.agentsweb/
+
+.omgithub-runtime/
+
+.opencode-ssh/
+
+.opencode-web/
+
+node_modules/

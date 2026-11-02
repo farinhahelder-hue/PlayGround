@@ -3,6 +3,7 @@ extends Node3D
 const Gen = preload("res://scripts/generators.gd")
 const ActionScene = preload("res://scripts/action.gd")
 const TobogganScene = preload("res://scripts/toboggan.gd")
+const Quake2Scene = preload("res://scripts/quake2.gd")
 
 const THEMES := ["nombres", "mesures", "grammaire", "conjugaison", "sciences", "anglais", "logique"]
 const THEME_LABELS := {
@@ -41,6 +42,7 @@ var tts_voice := ""
 var last_speak_ms := 0
 var action_mode: Node3D = null
 var toboggan_mode: Node3D = null
+var quake_mode: Node3D = null
 var main_cam: Camera3D = null
 var world_props: Array = []
 
@@ -80,10 +82,12 @@ func _ready() -> void:
 		start_arena()
 	elif OS.get_cmdline_user_args().has("--toboggan"):
 		start_toboggan()
+	elif OS.get_cmdline_user_args().has("--quake2"):
+		start_quake2()
 
 
 func _process(delta: float) -> void:
-	if action_mode != null or toboggan_mode != null:
+	if action_mode != null or toboggan_mode != null or quake_mode != null:
 		return
 	t_accum += delta
 	var cam := get_viewport().get_camera_3d()
@@ -643,6 +647,9 @@ func _build_menu(root: Control) -> void:
 	var toboggan_btn := _make_button("Toboggan", Vector2(180, 58), 20)
 	toboggan_btn.pressed.connect(start_toboggan)
 	main_row.add_child(toboggan_btn)
+	var quake_btn := _make_button("Quake 2", Vector2(160, 58), 20)
+	quake_btn.pressed.connect(start_quake2)
+	main_row.add_child(quake_btn)
 
 	var char_row := HBoxContainer.new()
 	char_row.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -655,7 +662,7 @@ func _build_menu(root: Control) -> void:
 		char_row.add_child(b)
 		char_buttons.append(b)
 
-	var hint := _make_label("Choisis ton personnage, puis joue 5 questions — ou tente l'Arène / le Toboggan !", 16, Color(0.62, 0.78, 0.94))
+	var hint := _make_label("Choisis ton personnage, puis joue 5 questions — ou tente l'Arène, le Toboggan ou Quake 2 !", 16, Color(0.62, 0.78, 0.94))
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vb.add_child(hint)
 
@@ -813,7 +820,7 @@ func start_duo() -> void:
 
 
 func start_arena() -> void:
-	if action_mode != null or toboggan_mode != null:
+	if action_mode != null or toboggan_mode != null or quake_mode != null:
 		return
 	print("ARENE — ", niveau, " · ", CHAR_NAMES[current_char])
 	playing = false
@@ -829,6 +836,24 @@ func start_arena() -> void:
 	add_child(action_mode)
 	action_mode.exited.connect(_close_arena)
 	action_mode.setup(niveau, current_char, self)
+	_play("level")
+
+func start_quake2() -> void:
+	if action_mode != null or toboggan_mode != null or quake_mode != null:
+		return
+	print("QUAKE2 — ", niveau, " · ", CHAR_NAMES[current_char])
+	playing = false
+	menu_root.visible = false
+	play_root.visible = false
+	results_root.visible = false
+	ui.visible = false
+	for p in world_props:
+		p.visible = false
+	for c in chars:
+		c.visible = false
+	quake_mode = Quake2Scene.new()
+	add_child(quake_mode)
+	quake_mode.exited.connect(_close_quake2)
 	_play("level")
 
 
@@ -850,7 +875,7 @@ func _close_arena() -> void:
 
 
 func start_toboggan() -> void:
-	if toboggan_mode != null or action_mode != null:
+	if toboggan_mode != null or action_mode != null or quake_mode != null:
 		return
 	print("TOBOGGAN — ", niveau, " · ", CHAR_NAMES[current_char])
 	playing = false
@@ -874,6 +899,22 @@ func _close_toboggan() -> void:
 		return
 	toboggan_mode.queue_free()
 	toboggan_mode = null
+	if main_cam != null:
+		main_cam.current = true
+	ui.visible = true
+	for p in world_props:
+		p.visible = true
+	for c in chars:
+		c.visible = false
+	if current_char >= 0 and current_char < chars.size():
+		chars[current_char].visible = true
+	_show_menu()
+
+func _close_quake2() -> void:
+	if quake_mode == null:
+		return
+	quake_mode.queue_free()
+	quake_mode = null
 	if main_cam != null:
 		main_cam.current = true
 	ui.visible = true

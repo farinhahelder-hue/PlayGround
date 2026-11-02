@@ -23,6 +23,7 @@ Modes directs (utile pour tester sans passer par le menu) :
 ```bash
 build/banquise.exe -- --arene       # démarre dans l'Arène
 build/banquise.exe -- --toboggan    # démarre sur la piste de Toboggan
+build/banquise.exe -- --quake2      # démarre dans Quake 2
 ```
 
 ## Contenu
@@ -78,6 +79,17 @@ il faut traverser la bonne porte-réponse, ou la détruire au tir, tout en évit
 - **Blocs de glace** : ils apparaissent devant la luge et défilent plus vite que la piste ;
   on les esquive ou on les détruit au tir (points + compteur).
 - `Échap` : quitte la descente et revient au menu.
+
+### Mode Quake 2 (survie en arène)
+
+Bouton **Quake 2** du menu, ou lancement direct avec `-- --quake2`. Une arène de survie
+infinie avec des vagues d'ennemis qui poursuivent le joueur.
+
+- **Déplacement** : `WASD`.
+- **Tirer** : maintenir le clic gauche ; les projectiles visent l'ennemi le plus proche.
+- **Santé** : les ennemis infligent des dégâts au contact ; chaque nouvelle vague restaure un peu de santé.
+- **Score** : points par ennemi éliminé et bonus de vague.
+- `Échap` : quitte le mode et revient au menu.
 
 ## Structure
 
